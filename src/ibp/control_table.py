@@ -2,8 +2,8 @@ import time
 import pyodbc
 from dataclasses import dataclass
 from datetime import datetime
-from ibp.context import Context
-from ibp.databaseconfig import DatabaseConfig
+from common.logging_config import Context
+from common.databaseconfig import DatabaseConfig
 from ibp.table_status import ControlTableStateRecord
 from ibp.table_staus_enum import ControlTableAllowedStates
 
@@ -21,7 +21,7 @@ class EtlControlTableState:
         try:
             if not cursor:
                 raise RuntimeError("Cannot access connection cursor!")
-            self.ctx.logger.info(
+            self.ctx.logger_adapter.info(
                 msg="CONTROL_TABLE_READ_START",
                 extra={
                     "step": step,
@@ -35,7 +35,7 @@ class EtlControlTableState:
                 WHERE cts.table_schema = ? AND cts.table_name = ?"""
             read_params = (table_schema, table_name)
             record = cursor.execute(read_sql, read_params).fetchone()
-            self.ctx.logger.info(
+            self.ctx.logger_adapter.info(
                 msg="CONTROL_TABLE_READ_END",
                 extra={
                     "step": step,
@@ -46,7 +46,7 @@ class EtlControlTableState:
             )
             return record
         except Exception:
-            self.ctx.logger.exception(
+            self.ctx.logger_adapter.exception(
                 msg="CONTROL_TABLE_READ_EXCEPTION",
                 extra={
                     "step": step,
@@ -62,7 +62,7 @@ class EtlControlTableState:
             if table_schema is None or table_name is None:
                 raise RuntimeError("table_schema and table_name cannot be None!")
             fq_table_name = f"{table_schema}.{table_name}"
-            self.ctx.logger.info(
+            self.ctx.logger_adapter.info(
                 msg="CONTROL_TABLE_STATUS_UPDATE_START",
                 extra={
                     "step": step,
@@ -77,7 +77,7 @@ class EtlControlTableState:
                 WHERE table_schema = ? AND table_name = ?"""
             update_params = (status.value, table_schema, table_name)
             updated_records_number = cursor.execute(update_sql, update_params).rowcount
-            self.ctx.logger.info(
+            self.ctx.logger_adapter.info(
                 msg="CONTROL_TABLE_STATUS_UPDATE_END",
                 extra={
                     "step": step,
@@ -87,7 +87,7 @@ class EtlControlTableState:
             )
             return updated_records_number
         except Exception:
-            self.ctx.logger.exception(
+            self.ctx.logger_adapter.exception(
                 msg="CONTROL_TABLE_STATUS_UPDATE_EXCEPTION",
                 extra={
                     "step": step,
@@ -133,7 +133,7 @@ class EtlControlTableState:
                     f"Only table with status in ({ControlTableAllowedStates.READY}, {ControlTableAllowedStates.LOADING}) can be updated!"
                 )
             action = target_status.name
-            self.ctx.logger.info(
+            self.ctx.logger_adapter.info(
                 msg=f"SET_TABLE_CONTROL_STATUS_TO_{action}_START",
                 extra={
                     "step": step,
@@ -198,7 +198,7 @@ class EtlControlTableState:
                         records_rejected = retrieved.records_rejected
                     )
             end_time = time.perf_counter()
-            self.ctx.logger.info(
+            self.ctx.logger_adapter.info(
                 msg=f"SET_TABLE_CONTROL_STATUS_TO_{action}_END",
                 extra={
                     "step": step,
@@ -208,7 +208,7 @@ class EtlControlTableState:
             )
             return updated_record
         except Exception:
-            self.ctx.logger.exception(
+            self.ctx.logger_adapter.exception(
                 msg=f"SET_TABLE_CONTROL_STATUS_TO_{action}_EXCEPTION",
                 extra={
                     "step": step,
