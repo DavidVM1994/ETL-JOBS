@@ -1,6 +1,6 @@
 from enum import IntEnum
 
-class ControlTableAllowedStates(IntEnum):
+class ControlTableStates(IntEnum):
     READY=0
     LOADING=1
     IMPORT=2

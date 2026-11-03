@@ -1,12 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime
-from ibp.table_staus_enum import ControlTableAllowedStates
+from ibp.table_staus_enum import ControlTableStates
 
 @dataclass
 class ControlTableStateRecord:
     table_schema: str
     table_name: str
-    status: ControlTableAllowedStates
+    status: ControlTableStates
     last_update: datetime
     last_success_at: datetime
     last_failure_at: datetime
