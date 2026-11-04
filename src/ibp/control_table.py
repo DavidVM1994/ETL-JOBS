@@ -1,7 +1,6 @@
 import time
-from typing import Any
-
 import pyodbc
+from typing import Any
 from dataclasses import dataclass
 from logging import Logger
 from datetime import datetime, timezone
@@ -14,7 +13,6 @@ class ControlTableInstance:
     table_name: str
     status: ControlTableStates
     last_update: datetime
-    status_changed_at: datetime
     last_success_at: datetime | None
     status_changed_at: datetime | None
     last_failure_at: datetime | None
@@ -36,7 +34,7 @@ def lookup_control_table(
         step: str,
         logger: Logger
 ) -> pyodbc.Row | None:
-    """Method looks up the control table for the given table_schema and table_name. If the given table has no record in the control table, an exception is raised."""
+    """Method looks up the control table for the target table using table_schema and table_name. If no record is found, a None value is returned."""
     fq_table_name = f"{table_schema}.{table_name}"
     try:
         logger.info(
@@ -62,7 +60,6 @@ def lookup_control_table(
             extra={
                 "step": step,
                 "table": fq_table_name,
-                "record_count": cursor.rowcount,
                 "table_status": (record.status if record else None)
             }
         )
@@ -77,22 +74,28 @@ def lookup_control_table(
         )
         raise
 
-def update_control_table_status_to_loading(
+def set_control_table_status_loading(
         cursor: pyodbc.Cursor,
         control_table_schema:str,
         control_table_name: str,
         table_schema: str,
         table_name: str,
+        process_name: str,
+        tracking_id: str,
+        object_id: str,
+        business_id: str,
         step: str,
-        logger: Logger
+        logger: Logger,
+        message: str | None
+
 ) -> None:
-    """Method update the status in the control table for the given table; if the record does not exist, it raises an exception."""
+    """Method updates the control table status column to 1=LOADING for the target table"""
 
     try:
         fq_table_name = f"{table_schema}.{table_name}"
 
         logger.info(
-            msg="SET_TABLE_STATUS_TO_LOADING_START",
+            msg="CONTROL_TABLE_SET_LOADING_START",
             extra={
                 "step": step,
                 "table": fq_table_name
@@ -101,17 +104,27 @@ def update_control_table_status_to_loading(
 
         update_sql = f"""
             UPDATE {control_table_schema}.{control_table_name}
-            SET status = {ControlTableStates.LOADING}, last_update = ?, status_changed_at = ?, process_name = ?, tracking_id = ?, object_id = ?, business_id = ?, message = ?
+            SET status = {ControlTableStates.LOADING.value}, last_update = ?, status_changed_at = ?, process_name = ?, tracking_id = ?, object_id = ?, business_id = ?, message = ?
             WHERE table_schema = ? AND table_name = ?"""
         timestamp = datetime.now(tz=timezone.utc)
-        update_params = (timestamp, timestamp, table_schema, table_name)
+        update_params = (
+            timestamp,
+            timestamp,
+            process_name,
+            tracking_id,
+            object_id,
+            business_id,
+            message,
+            table_schema,
+            table_name
+        )
         updated_records_number = cursor.execute(
             update_sql,
             update_params
         ).rowcount
 
         logger.info(
-            msg="SET_TABLE_STATUS_TO_LOADING_END",
+            msg="CONTROL_TABLE_SET_LOADING_END",
             extra={
                 "step": step,
                 "table": fq_table_name,
@@ -121,7 +134,7 @@ def update_control_table_status_to_loading(
 
     except Exception:
         logger.exception(
-            msg="SET_TABLE_STATUS_TO_LOADING_EXCEPTION",
+            msg="CONTROL_TABLE_SET_LOADING_EXCEPTION",
             extra={
                 "step": step,
                 "table": f"{table_schema}.{table_name}"
@@ -130,24 +143,26 @@ def update_control_table_status_to_loading(
         raise
 
 
-def update_control_table_status_to_ready(
+def set_control_table_status_ready(
         cursor: pyodbc.Cursor,
         control_table_schema: str,
         control_table_name: str,
         table_schema: str,
         table_name: str,
         step: str,
-        records_inserted: int,
-        records_rejected: int,
+        records_inserted: int | None,
+        records_rejected: int | None,
         logger: Logger
 ) -> None:
-    """Method update the status to ready(successful flow execution) in the control table for the given table; if the record does not exist, it raises an exception."""
+    """Method updates the control table status column to 0=READY for the target table"""
 
     try:
         fq_table_name = f"{table_schema}.{table_name}"
+        records_inserted = records_inserted if records_inserted is not None else 0
+        records_rejected = records_rejected if records_rejected is not None else 0
 
         logger.info(
-            msg="SET_TABLE_STATUS_TO_READY_START",
+            msg="CONTROL_TABLE_SET_READY_START",
             extra={
                 "step": step,
                 "table": fq_table_name
@@ -156,17 +171,25 @@ def update_control_table_status_to_ready(
         
         sql = f"""
             UPDATE {control_table_schema}.{control_table_name}
-            SET status = {ControlTableStates.READY}, last_update = ?, status_changed_at = ?, last_success_at = ?, records_inserted = ?, records_rejected = ?
+            SET status = {ControlTableStates.READY.value}, last_update = ?, status_changed_at = ?, last_success_at = ?, records_inserted = ?, records_rejected = ?
             WHERE table_schema = ? AND table_name = ?"""
         timestamp = datetime.now(tz=timezone.utc)
-        update_params = (timestamp, timestamp, timestamp, records_inserted, records_rejected, table_schema, table_name)
+        update_params = (
+            timestamp,
+            timestamp,
+            timestamp,
+            records_inserted,
+            records_rejected,
+            table_schema,
+            table_name
+        )
         updated_records_number = cursor.execute(
             sql,
             update_params
         ).rowcount
 
         logger.info(
-            msg="SET_TABLE_STATUS_TO_READY_END",
+            msg="CONTROL_TABLE_SET_READY_END",
             extra={
                 "step": step,
                 "table": fq_table_name,
@@ -176,7 +199,7 @@ def update_control_table_status_to_ready(
 
     except Exception:
         logger.exception(
-            msg="SET_TABLE_STATUS_TO_READY_EXCEPTION",
+            msg="CONTROL_TABLE_SET_READY_EXCEPTION",
             extra={
                 "step": step,
                 "table": f"{table_schema}.{table_name}"
@@ -184,7 +207,7 @@ def update_control_table_status_to_ready(
         )
         raise
 
-def update_control_table_status(
+def mark_control_table_loading(
         database_config: DatabaseConfig,
         control_table_instance: ControlTableInstance,
         control_table_schema: str,
@@ -192,13 +215,13 @@ def update_control_table_status(
         step: str,
         logger: Logger
 )-> ControlTableInstance:
-    """ Methods orchestrate the following operations:
+    """ Method orchestrates the following operations:
 
-    1) Read the input table status in the control table; If no records is present for the table an exception is raised. If table status is not 0, 1 an exception is raised.
+    1) Reads the input table status in the control table; If no records is present for the table an exception is raised. If table status is not READY, LOADING an exception is raised.
 
-    2) Update the input table status to 1 (Loading) in the control table; if updated fails an exception is raised.
+    2) Updates the input table status to 1 LOADING in the control table; if it fails an exception is raised.
 
-    3) Retrieve the control table record corresponding to the given table and return a DTO
+    3) Retrieves the control table record for the target table to check the update and maps it to DTO.
     """
     table_schema = control_table_instance.table_schema
     table_name = control_table_instance.table_name
@@ -218,7 +241,7 @@ def update_control_table_status(
     try:
 
         logger.info(
-            msg="UPDATE_CONTROL_TABLE_STATUS_START",
+            msg="CONTROL_TABLE_MARK_LOADING_START",
             extra={
                 "step": step,
                 "table": fq_table_name
@@ -228,7 +251,9 @@ def update_control_table_status(
         missing = [key for key in required.keys() if not required.get(key)]
 
         if missing:
-            raise RuntimeError(f"Missing required fields: {missing}")
+            raise RuntimeError(
+                f"Missing required input fields: {missing}"
+            )
 
         start_time = time.perf_counter()
         with pyodbc.connect(
@@ -262,12 +287,17 @@ def update_control_table_status(
                         "Table status in control table is not 0 (READY) or 1 (LOADING)! Flow cannot proceed!"
                     )
 
-                update_control_table_status_to_loading(
+                set_control_table_status_loading(
                     cursor=cursor,
                     control_table_schema=control_table_schema,
                     control_table_name=control_table_name,
                     table_schema=table_schema,
                     table_name=table_name,
+                    process_name=control_table_instance.process_name,
+                    tracking_id=control_table_instance.tracking_id,
+                    object_id=control_table_instance.object_id,
+                    business_id=control_table_instance.business_id,
+                    message=control_table_instance.message,
                     step=step,
                     logger=logger
                 )
@@ -289,7 +319,7 @@ def update_control_table_status(
             conn.commit()
         end_time = time.perf_counter()
         logger.info(
-            msg="UPDATE_CONTROL_TABLE_STATUS_END",
+            msg="CONTROL_TABLE_MARK_LOADING_END",
             extra={
                 "step": step,
                 "table": fq_table_name,
@@ -315,7 +345,114 @@ def update_control_table_status(
         )
     except Exception:
         logger.exception(
-            msg="UPDATE_CONTROL_TABLE_STATUS_EXCEPTION",
+            msg="CONTROL_TABLE_MARK_LOADING_EXCEPTION",
+            extra={
+                "step": step,
+                "table": fq_table_name
+            }
+        )
+        raise
+
+def mark_control_table_ready(
+        database_config: DatabaseConfig,
+        control_table_instance: ControlTableInstance,
+        control_table_schema: str,
+        control_table_name: str,
+        step: str,
+        logger: Logger
+)-> None:
+    """ Method Orchestrates the following operations:
+
+    1) Updates the control table status column for the target table to 0=READY; If the update fails an exception is raised
+
+    2) Reads the control table and checks that the update was successful, otherwise raises an exception
+    """
+    table_schema = control_table_instance.table_schema
+    table_name = control_table_instance.table_name
+    fq_table_name = f"{table_schema}.{table_name}"
+
+    required: dict[str, Any] = {
+        "control_table_schema": control_table_schema,
+        "control_table_name": control_table_name,
+        "table_schema": table_schema,
+        "table_name": table_name
+    }
+
+    try:
+
+        logger.info(
+            msg="CONTROL_TABLE_MARK_READY_START",
+            extra={
+                "step": step,
+                "table": fq_table_name
+            }
+        )
+
+        missing = [key for key in required.keys() if not required.get(key)]
+
+        if missing:
+            raise RuntimeError(
+                f"Missing required input fields: {missing}"
+            )
+
+        start_time = time.perf_counter()
+        with pyodbc.connect(
+                driver=database_config.driver,
+                server=database_config.host,
+                database=database_config.dbname,
+                encrypt="yes",
+                trustservercertificate="yes",
+                uid=database_config.username,
+                pwd=database_config.password,
+                autocommit=False
+        ) as conn:
+            with conn.cursor() as cursor:
+                
+                set_control_table_status_ready(
+                    cursor=cursor,
+                    control_table_schema=control_table_schema,
+                    control_table_name=control_table_name,
+                    table_schema=table_schema,
+                    table_name=table_name,
+                    step=step,
+                    logger=logger,
+                    records_inserted=control_table_instance.records_inserted,
+                    records_rejected=control_table_instance.records_rejected
+                )
+
+                retrieved = lookup_control_table(
+                    cursor=cursor,
+                    control_table_schema=control_table_schema,
+                    control_table_name=control_table_name,
+                    table_schema=table_schema,
+                    table_name=table_name,
+                    step=step,
+                    logger=logger
+                )
+
+                if retrieved is None:
+                    raise RuntimeError(
+                        f"Failed to retrieve control table record for table: {fq_table_name}!"
+                    )
+                if retrieved.status != ControlTableStates.READY:
+                    raise RuntimeError(
+                        f"Failed to updated control table record for table: {fq_table_name}!"
+                    )
+            conn.commit()
+        end_time = time.perf_counter()
+        logger.info(
+            msg="CONTROL_TABLE_MARK_READY_END",
+            extra={
+                "step": step,
+                "table": fq_table_name,
+                "duration_s": round(end_time - start_time, 2)
+            }
+
+        )
+
+    except Exception:
+        logger.exception(
+            msg="CONTROL_TABLE_MARK_READY_EXCEPTION",
             extra={
                 "step": step,
                 "table": fq_table_name
