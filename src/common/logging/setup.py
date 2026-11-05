@@ -2,7 +2,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from context import log_context
+from common.logging.context import log_context
 from datetime import datetime, timezone
 
 class ContextFilter(logging.Filter):
@@ -109,3 +109,18 @@ def create_json_file_handler(level: int, file_path: Path, write_mode: str, encod
     handler.setLevel(level=level)
     handler.setFormatter(formatter)
     return handler
+
+def log_level_mapper(level:str) -> int:
+    match level:
+        case "DEBUG":
+            return logging.DEBUG
+        case "INFO":
+            return logging.INFO
+        case "WARNING":
+            return logging.WARNING
+        case "ERROR":
+            return logging.ERROR
+    raise ValueError(
+        f"Invalid log level:{level}"
+    )
+

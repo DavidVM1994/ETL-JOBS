@@ -13,8 +13,8 @@ def load_env(path: Path)->None:
         dotenv.load_dotenv(dotenv_path=path)
         _loaded = True
 
-def require_key(key:str)->str:
-    value = os.getenv(key)
+def require_key(key:str, prefix: str | None = None)->str:
+    value = os.getenv(key) if prefix is None else os.getenv(f"{prefix}_{key}")
     if not value:
         raise RuntimeError(f"required environment variable {key} not set")
     return value

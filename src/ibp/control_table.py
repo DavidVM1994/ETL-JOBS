@@ -1,18 +1,27 @@
+import struct
 import time
 import pyodbc
+from enum import IntEnum
 from typing import Any
 from dataclasses import dataclass
 from logging import Logger
-from datetime import datetime, timezone
-from common.database.databaseconfig import DatabaseConfig
-from ibp.table_staus_enum import ControlTableStates
+from datetime import datetime, timezone, timedelta
+from common.database.config import DatabaseConfig, Table
+
+
+class ControlTableStates(IntEnum):
+    READY = 0
+    LOADING = 1
+    IMPORT = 2
+    SUCCESS = 3
+    FREEZE = 4
+
 
 @dataclass
 class ControlTableInstance:
-    table_schema: str
-    table_name: str
-    status: ControlTableStates
-    last_update: datetime
+    table: Table
+    status: ControlTableStates | None
+    last_update: datetime | None
     last_success_at: datetime | None
     status_changed_at: datetime | None
     last_failure_at: datetime | None
@@ -24,18 +33,50 @@ class ControlTableInstance:
     records_rejected: int | None
     message: str | None
 
+    @classmethod
+    def create(
+            cls,
+            table: Table,
+            process_name: str,
+            tracking_id: str,
+            object_id: str,
+            business_id: str
+    ) -> ControlTableInstance:
+        return cls(
+            table=table,
+            status=None,
+            last_update=None,
+            status_changed_at=None,
+            last_failure_at=None,
+            last_success_at=None,
+            process_name=process_name,
+            tracking_id=tracking_id,
+            object_id=object_id,
+            business_id=business_id,
+            records_inserted=None,
+            records_rejected=None,
+            message=None
+        )
+
+
+def handle_datetimeoffset(value):
+    tup = struct.unpack("<6hI2h", value)
+    return datetime(tup[0], tup[1], tup[2], tup[3], tup[4], tup[5], tup[6] // 1000,
+                    timezone(timedelta(hours=tup[7], minutes=tup[8])))
+
 
 def lookup_control_table(
         cursor: pyodbc.Cursor,
-        control_table_schema: str,
-        control_table_name: str,
-        table_schema: str,
-        table_name: str,
+        control_table: Table,
+        table: Table,
         step: str,
         logger: Logger
 ) -> pyodbc.Row | None:
-    """Method looks up the control table for the target table using table_schema and table_name. If no record is found, a None value is returned."""
-    fq_table_name = f"{table_schema}.{table_name}"
+    """Method looks up the control table for the target table using table_schema and table_name.
+
+    If no record is found, a None value is returned."""
+
+    fq_table_name = f"{table.table_schema}.{table.table_name}"
     try:
         logger.info(
             msg="CONTROL_TABLE_LOOKUP_START",
@@ -45,10 +86,10 @@ def lookup_control_table(
             }
         )
 
-        sql = f"SELECT * FROM {control_table_schema}.{control_table_name} WHERE table_schema = ? AND table_name = ?;"
+        sql = f"SELECT * FROM {control_table.table_schema}.{control_table.table_name} WHERE table_schema = ? AND table_name = ?;"
         params = (
-            table_schema,
-            table_name
+            table.table_schema,
+            table.table_name
         )
         record = cursor.execute(
             sql,
@@ -74,12 +115,11 @@ def lookup_control_table(
         )
         raise
 
+
 def set_control_table_status_loading(
         cursor: pyodbc.Cursor,
-        control_table_schema:str,
-        control_table_name: str,
-        table_schema: str,
-        table_name: str,
+        control_table: Table,
+        table: Table,
         process_name: str,
         tracking_id: str,
         object_id: str,
@@ -91,8 +131,8 @@ def set_control_table_status_loading(
 ) -> None:
     """Method updates the control table status column to 1=LOADING for the target table"""
 
+    fq_table_name = f"{table.table_schema}.{table.table_name}"
     try:
-        fq_table_name = f"{table_schema}.{table_name}"
 
         logger.info(
             msg="CONTROL_TABLE_SET_LOADING_START",
@@ -103,7 +143,7 @@ def set_control_table_status_loading(
         )
 
         update_sql = f"""
-            UPDATE {control_table_schema}.{control_table_name}
+            UPDATE {control_table.table_schema}.{control_table.table_name}
             SET status = {ControlTableStates.LOADING.value}, last_update = ?, status_changed_at = ?, process_name = ?, tracking_id = ?, object_id = ?, business_id = ?, message = ?
             WHERE table_schema = ? AND table_name = ?"""
         timestamp = datetime.now(tz=timezone.utc)
@@ -115,8 +155,8 @@ def set_control_table_status_loading(
             object_id,
             business_id,
             message,
-            table_schema,
-            table_name
+            table.table_schema,
+            table.table_name
         )
         updated_records_number = cursor.execute(
             update_sql,
@@ -137,7 +177,7 @@ def set_control_table_status_loading(
             msg="CONTROL_TABLE_SET_LOADING_EXCEPTION",
             extra={
                 "step": step,
-                "table": f"{table_schema}.{table_name}"
+                "table": fq_table_name
             }
         )
         raise
@@ -145,10 +185,8 @@ def set_control_table_status_loading(
 
 def set_control_table_status_ready(
         cursor: pyodbc.Cursor,
-        control_table_schema: str,
-        control_table_name: str,
-        table_schema: str,
-        table_name: str,
+        control_table: Table,
+        table: Table,
         step: str,
         records_inserted: int | None,
         records_rejected: int | None,
@@ -156,8 +194,8 @@ def set_control_table_status_ready(
 ) -> None:
     """Method updates the control table status column to 0=READY for the target table"""
 
+    fq_table_name = f"{table.table_schema}.{table.table_name}"
     try:
-        fq_table_name = f"{table_schema}.{table_name}"
         records_inserted = records_inserted if records_inserted is not None else 0
         records_rejected = records_rejected if records_rejected is not None else 0
 
@@ -168,9 +206,9 @@ def set_control_table_status_ready(
                 "table": fq_table_name
             }
         )
-        
+
         sql = f"""
-            UPDATE {control_table_schema}.{control_table_name}
+            UPDATE {control_table.table_schema}.{control_table.table_name}
             SET status = {ControlTableStates.READY.value}, last_update = ?, status_changed_at = ?, last_success_at = ?, records_inserted = ?, records_rejected = ?
             WHERE table_schema = ? AND table_name = ?"""
         timestamp = datetime.now(tz=timezone.utc)
@@ -180,8 +218,8 @@ def set_control_table_status_ready(
             timestamp,
             records_inserted,
             records_rejected,
-            table_schema,
-            table_name
+            table.table_schema,
+            table.table_name
         )
         updated_records_number = cursor.execute(
             sql,
@@ -202,19 +240,19 @@ def set_control_table_status_ready(
             msg="CONTROL_TABLE_SET_READY_EXCEPTION",
             extra={
                 "step": step,
-                "table": f"{table_schema}.{table_name}"
+                "table": fq_table_name
             }
         )
         raise
 
+
 def mark_control_table_loading(
         database_config: DatabaseConfig,
         control_table_instance: ControlTableInstance,
-        control_table_schema: str,
-        control_table_name: str,
+        control_table: Table,
         step: str,
         logger: Logger
-)-> ControlTableInstance:
+) -> ControlTableInstance:
     """ Method orchestrates the following operations:
 
     1) Reads the input table status in the control table; If no records is present for the table an exception is raised. If table status is not READY, LOADING an exception is raised.
@@ -223,13 +261,13 @@ def mark_control_table_loading(
 
     3) Retrieves the control table record for the target table to check the update and maps it to DTO.
     """
-    table_schema = control_table_instance.table_schema
-    table_name = control_table_instance.table_name
+    table_schema = control_table_instance.table.table_schema
+    table_name = control_table_instance.table.table_name
     fq_table_name = f"{table_schema}.{table_name}"
 
     required: dict[str, Any] = {
-        "control_table_schema": control_table_schema,
-        "control_table_name": control_table_name,
+        "control_table_schema": control_table.table_schema,
+        "control_table_name": control_table.table_name,
         "table_schema": table_schema,
         "table_name": table_name,
         "process_name": control_table_instance.process_name,
@@ -266,13 +304,12 @@ def mark_control_table_loading(
                 pwd=database_config.password,
                 autocommit=False
         ) as conn:
+            conn.add_output_converter(-155, handle_datetimeoffset)
             with conn.cursor() as cursor:
                 row = lookup_control_table(
                     cursor=cursor,
-                    control_table_schema=control_table_schema,
-                    control_table_name=control_table_name,
-                    table_schema=table_schema,
-                    table_name=table_name,
+                    control_table=control_table,
+                    table=control_table_instance.table,
                     step=step,
                     logger=logger
                 )
@@ -289,10 +326,8 @@ def mark_control_table_loading(
 
                 set_control_table_status_loading(
                     cursor=cursor,
-                    control_table_schema=control_table_schema,
-                    control_table_name=control_table_name,
-                    table_schema=table_schema,
-                    table_name=table_name,
+                    control_table=control_table,
+                    table=control_table_instance.table,
                     process_name=control_table_instance.process_name,
                     tracking_id=control_table_instance.tracking_id,
                     object_id=control_table_instance.object_id,
@@ -304,10 +339,8 @@ def mark_control_table_loading(
 
                 retrieved = lookup_control_table(
                     cursor=cursor,
-                    control_table_schema=control_table_schema,
-                    control_table_name=control_table_name,
-                    table_schema=table_schema,
-                    table_name=table_name,
+                    control_table=control_table,
+                    table=control_table_instance.table,
                     step=step,
                     logger=logger
                 )
@@ -328,8 +361,10 @@ def mark_control_table_loading(
 
         )
         return ControlTableInstance(
-            table_schema=retrieved.table_schema,
-            table_name=retrieved.table_name,
+            table=Table(
+                table_schema=retrieved.table_schema,
+                table_name=retrieved.table_name
+            ),
             status=retrieved.status,
             last_update=retrieved.last_update,
             status_changed_at=retrieved.status_changed_at,
@@ -353,27 +388,27 @@ def mark_control_table_loading(
         )
         raise
 
+
 def mark_control_table_ready(
         database_config: DatabaseConfig,
         control_table_instance: ControlTableInstance,
-        control_table_schema: str,
-        control_table_name: str,
+        control_table: Table,
         step: str,
         logger: Logger
-)-> None:
+) -> None:
     """ Method Orchestrates the following operations:
 
     1) Updates the control table status column for the target table to 0=READY; If the update fails an exception is raised
 
     2) Reads the control table and checks that the update was successful, otherwise raises an exception
     """
-    table_schema = control_table_instance.table_schema
-    table_name = control_table_instance.table_name
+    table_schema = control_table_instance.table.table_schema
+    table_name = control_table_instance.table.table_name
     fq_table_name = f"{table_schema}.{table_name}"
 
     required: dict[str, Any] = {
-        "control_table_schema": control_table_schema,
-        "control_table_name": control_table_name,
+        "control_table_schema": control_table.table_schema,
+        "control_table_name": control_table.table_name,
         "table_schema": table_schema,
         "table_name": table_name
     }
@@ -406,14 +441,13 @@ def mark_control_table_ready(
                 pwd=database_config.password,
                 autocommit=False
         ) as conn:
+            conn.add_output_converter(-155, handle_datetimeoffset)
             with conn.cursor() as cursor:
-                
+
                 set_control_table_status_ready(
                     cursor=cursor,
-                    control_table_schema=control_table_schema,
-                    control_table_name=control_table_name,
-                    table_schema=table_schema,
-                    table_name=table_name,
+                    control_table=control_table,
+                    table=control_table_instance.table,
                     step=step,
                     logger=logger,
                     records_inserted=control_table_instance.records_inserted,
@@ -422,10 +456,8 @@ def mark_control_table_ready(
 
                 retrieved = lookup_control_table(
                     cursor=cursor,
-                    control_table_schema=control_table_schema,
-                    control_table_name=control_table_name,
-                    table_schema=table_schema,
-                    table_name=table_name,
+                    control_table=control_table,
+                    table=control_table_instance.table,
                     step=step,
                     logger=logger
                 )
