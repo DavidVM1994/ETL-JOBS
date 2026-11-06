@@ -5,8 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "connectorx>=0.4.6",
     "load-dotenv>=0.1.0",
     "polars>=2.1.0",
+    "psutil>=7.2.2",
+    "pyarrow>=26.0.1",
     "pyodbc>=5.3.0",
 ]
 
